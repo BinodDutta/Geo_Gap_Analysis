@@ -1,2 +1,15 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+# Auto-detect text files and perform LF normalization
+* text=auto
+
+# Ensure python scripts always use LF (Linux style) - safer for everyone
+*.py text eol=lf
+
+# Treat your massive data files as binary so Git doesn't crash trying to read them
+*.csv binary
+*.json binary
+*.geojson binary
+
+# Treat the HTML map as binary (so Git doesn't try to show diffs for 10,000 lines of map code)
+*.html binary

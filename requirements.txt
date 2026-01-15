@@ -1,0 +1,13 @@
+pandas
+numpy
+
+scikit-learn
+
+folium
+matplotlib
+seaborn
+
+requests
+
+branca
+shapely

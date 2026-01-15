@@ -1,0 +1,19 @@
+# --- 1. Python Junk (Don't upload this) ---
+__pycache__/
+*.pyc
+*.pyo
+venv/
+env/
+.env
+
+# --- 2. OS Junk ---
+.DS_Store
+Thumbs.db
+
+# --- 3. Massive Data Files (CRITICAL) ---
+# GitHub rejects files larger than 100MB. 
+# If your raw_data CSVs are huge, you MUST ignore them.
+raw_data/
+
+# Optional: If you want to force users to generate the cleaned data themselves
+# Cleaned_Data/
