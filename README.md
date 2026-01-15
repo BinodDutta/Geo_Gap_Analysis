@@ -1,19 +1,3 @@
-Here is a professional `README.md` based strictly on the code provided.
-
-### **Important Analysis of Your Code's Logic**
-
-Before the README, here is the breakdown of the exact Math and Logic currently implemented in your uploaded files:
-
-* **The Logic:** You are using a **Weighted Demand Aggregation** model. You prioritize specific transaction types (Biometrics > Demographics > Enrolment) because they require more resources (time/hardware).
-* **The Math:** You are using **Z-Score Normalization** (Standard Deviation). You calculate a `raw_load` for every pincode and then compare it to the national average.
-* *Formula:* 
-* If a pincode's Z-Score is **> 3.0**, it is flagged as an "Extreme" anomaly (3 Standard Deviations above the mean).
-
-
-* **The "AI" Component:** You are using **Unsupervised Anomaly Detection** via `scikit-learn`'s `StandardScaler`. This automatically learns the distribution of your data to identify outliers without needing labeled training data.
-
----
-
 #  Digital Gap Analysis: Aadhaar Service Coverage
 
 ### A Geospatial Intelligence System to identify underserved regions using Statistical Anomaly Detection.
