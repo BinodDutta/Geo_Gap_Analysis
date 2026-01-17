@@ -11,143 +11,112 @@ FOLDERS = {
     "biometric": "Cleaned_Data/Biometric"
 }
 
-WEIGHTS = {"enrol": 1.0, "demo": 1.2, "bio": 2.5}
+MONTH_WEIGHTS = {
+    "December": 1.00, "November": 0.75, "October": 0.56, "September": 0.42,
+    "August": 0.32,   "July": 0.24,     "June": 0.18,    "May": 0.13, 
+    "April": 0.10,    "March": 0.08,    "February": 0.06, "January": 0.04,
+    # Short forms
+    "Dec": 1.00, "Nov": 0.75, "Oct": 0.56, "Sep": 0.42,
+    "Aug": 0.32, "Jul": 0.24, "Jun": 0.18, "May": 0.13, 
+    "Apr": 0.10, "Mar": 0.08, "Feb": 0.06, "Jan": 0.04
+}
 
-def find_pincode_column(df):
-    """
-    Robustly finds the column containing 6-digit Pincodes.
-    """
-    for col in df.columns:
-        try:
-            # 1. Convert column to string Series
-            s = df[col].astype(str)
-            
-            # 2. Remove non-digits (vectorized)
-            clean_s = s.str.replace(r'\D', '', regex=True)
-            
-            # 3. Check for 6-digit pattern
-            # We check if > 10% of non-empty rows look like pincodes
-            valid_mask = clean_s.str.fullmatch(r'\d{6}')
-            valid_count = valid_mask.sum()
-            total_rows = len(df)
-            
-            if total_rows > 0 and (valid_count / total_rows) > 0.1:
-                return col
-        except Exception:
-            continue
-            
-    return None
+def clean_pincode(df):
+    if 'pincode' not in df.columns: return df
+    df['pincode'] = df['pincode'].astype(str).str.split('.').str[0].str.replace(r'\D', '', regex=True)
+    return df[df['pincode'].str.len() == 6]
 
-def fast_process_nuclear(folder_path, col_name):
-    print(f"Scanning {folder_path}...")
-    files = glob.glob(os.path.join(folder_path, "*.csv"))
-    
-    if not files: 
-        print(f"  [WARN] No files in {folder_path}")
-        return pd.DataFrame() # Return empty if no files
-
+def load_and_score(folder, f_type):
+    print(f"Processing {f_type}...")
+    files = glob.glob(os.path.join(folder, "*.csv"))
     chunk_list = []
-    
+
     for f in files:
         try:
-            # 1. READ AGGRESSIVELY
-            try:
-                # Read everything as string to avoid type errors
-                df = pd.read_csv(f, on_bad_lines='skip', encoding='utf-8', dtype=str)
-            except UnicodeDecodeError:
-                df = pd.read_csv(f, on_bad_lines='skip', encoding='latin1', dtype=str)
+            df = pd.read_csv(f, on_bad_lines='skip', dtype=str)
+            df = clean_pincode(df)
             
-            if df.empty: continue
+            # Numeric conversion
+            cols_to_convert = [col for col in df.columns if 'age' in col.lower()]
+            for c in cols_to_convert:
+                df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0)
 
-            # 2. FIND PINCODE COLUMN
-            target_col = find_pincode_column(df)
-            
-            if target_col is None:
-                # print(f"  [SKIP] No pincode data in {os.path.basename(f)}")
-                continue
+            # --- CALCULATE SCORE ---
+            if f_type == "enrolment":
+                c0_5 = df.get('age_0_5', 0)
+                c5_17 = df.get('age_5_17', 0)
+                c18 = df.get('age_18_greater', 0)
+                df['score'] = (1.5 * c0_5) + (1.2 * c5_17) + (1.0 * c18)
 
-            # 3. NORMALIZE
-            # Rename detected column to 'pincode'
-            df = df.rename(columns={target_col: 'pincode'})
-            
-            # Clean and Filter
-            df['pincode'] = (
-                df['pincode']
-                .astype(str)
-                .str.split('.').str[0]
-                .str.replace(r'\D', '', regex=True)
-            )
-            df = df[df['pincode'].str.len() == 6]
-            
-            # 4. AGGREGATE
-            chunk_agg = df['pincode'].value_counts().reset_index()
-            chunk_agg.columns = ['pincode', col_name]
-            chunk_list.append(chunk_agg)
-            
+            elif f_type == "biometric":
+                c5_17 = df.get('bio_age_5_17', 0)
+                c17_ = df.get('bio_age_17_', 0)
+                df['score'] = (1.5 * c5_17) + (1.2 * c17_)
+
+            elif f_type == "demographics":
+                c5_17 = df.get('demo_age_5_17', 0)
+                c17_ = df.get('demo_age_17_', 0)
+                df['score'] = (1.5 * c5_17) + (1.2 * c17_)
+
+            # --- NEW: COUNT TRANSACTIONS ---
+            # Every row in the CSV is treated as 1 transaction instance
+            df['txn_count'] = 1
+
+            if 'Month' in df.columns:
+                chunk_list.append(df[['pincode', 'Month', 'score', 'txn_count']])
+            else:
+                print(f" [WARN] 'Month' column missing in {os.path.basename(f)}")
+                
         except Exception as e:
-            print(f"  [CRASH] File {os.path.basename(f)} failed: {e}")
-            continue
+            print(f" [ERR] {e}")
 
-    if not chunk_list: 
-        return pd.DataFrame(columns=['pincode', col_name]) # Return empty DF with correct columns
-        
-    return pd.concat(chunk_list).groupby('pincode')[col_name].sum().reset_index()
+    if not chunk_list: return pd.DataFrame()
+    
+    combined = pd.concat(chunk_list)
+    
+    # Sum both Score AND Transaction Count
+    return combined.groupby(['pincode', 'Month'])[['score', 'txn_count']].sum().reset_index()
 
-# --- EXECUTION ---
-print(">>> Step 1: Extraction...")
-df_enrol = fast_process_nuclear(FOLDERS["enrolment"], "count_enrol")
-df_demo = fast_process_nuclear(FOLDERS["demographics"], "count_demo")
-df_bio = fast_process_nuclear(FOLDERS["biometric"], "count_bio")
+# --- STEP 1: CALCULATE SCORES & COUNTS ---
+# Rename columns to identify source (E, B, D)
+df_E = load_and_score(FOLDERS["enrolment"], "enrolment").rename(columns={'score': 'Et', 'txn_count': 'Count_E'})
+df_B = load_and_score(FOLDERS["biometric"], "biometric").rename(columns={'score': 'Bt', 'txn_count': 'Count_B'})
+df_D = load_and_score(FOLDERS["demographics"], "demographics").rename(columns={'score': 'Dt', 'txn_count': 'Count_D'})
 
-# --- SAFE MERGE ---
-print(">>> Step 2: Merging...")
-
-# Helper to ensure DF has 'pincode' column before merging
-def validate_df(df, name):
-    if 'pincode' not in df.columns:
-        return pd.DataFrame(columns=['pincode', name])
-    return df
-
-df_enrol = validate_df(df_enrol, "count_enrol")
-df_demo = validate_df(df_demo, "count_demo")
-df_bio = validate_df(df_bio, "count_bio")
-
-# Start Merge
-merged = pd.merge(df_enrol, df_demo, on='pincode', how='outer')
-merged = pd.merge(merged, df_bio, on='pincode', how='outer')
+# --- STEP 2: MERGE ---
+print(">>> Merging Datasets...")
+merged = pd.merge(df_E, df_B, on=['pincode', 'Month'], how='outer')
+merged = pd.merge(merged, df_D, on=['pincode', 'Month'], how='outer')
 merged.fillna(0, inplace=True)
 
-if merged.empty:
-    print("FATAL ERROR: No valid Pincode data was found in any folder.")
-    exit()
+# --- STEP 3: CALCULATE CORRECTED Nt ---
+# Nt = Sum of all transaction counts across datasets for this month
+merged['Nt'] = merged['Count_E'] + merged['Count_B'] + merged['Count_D']
 
-# --- STATISTICAL FILTERING ---
-print(">>> Step 3: Statistical Analysis...")
+# --- STEP 4: RAW LOAD CALCULATION ---
+# Formula: (1*Et + 1.2*Dt + 1.5*Bt) / (3 + 1/3 * Nt)
+numerator = (1.0 * merged['Et']) + (1.2 * merged['Dt']) + (1.5 * merged['Bt'])
+denominator = 3.0 + (merged['Nt'] / 3.0)
 
-# Weighted Load
-merged['raw_load'] = (
-    (merged['count_enrol'] * WEIGHTS['enrol']) + 
-    (merged['count_demo'] * WEIGHTS['demo']) + 
-    (merged['count_bio'] * WEIGHTS['bio'])
-) / 3
+merged['raw_load_t'] = numerator / denominator
 
-# Normalize
+# --- STEP 5: EMA CALCULATION ---
+print(">>> Applying EMA Weights...")
+merged['Wt'] = merged['Month'].map(MONTH_WEIGHTS).fillna(1)
+merged['weighted_load'] = merged['raw_load_t'] * merged['Wt']
+
+final_ema = merged.groupby('pincode')['weighted_load'].sum().reset_index()
+final_ema.rename(columns={'weighted_load': 'EMA_i'}, inplace=True)
+
+# --- STEP 6: Z-SCORE ---
+print(">>> Calculating Z-Scores...")
 scaler = StandardScaler()
-merged['z_score'] = scaler.fit_transform(merged[['raw_load']])
+final_ema['z_score'] = scaler.fit_transform(final_ema[['EMA_i']])
 
-# Filter Positive Deviations
-critical_zones = merged[merged['z_score'] > 0].copy()
+# --- EXPORT ---
+output_path = "Cleaned_Data/statistical_gap_analysis.json"
+final_ema = final_ema.sort_values('z_score', ascending=False)
+final_ema.to_json(output_path, orient='records', indent=4)
 
-# Severity
-def assign_severity(z):
-    if z >= 3.0: return "Extreme"
-    if z >= 2.0: return "Critical"
-    if z >= 1.0: return "High"
-    return "Moderate"
-
-critical_zones['severity'] = critical_zones['z_score'].apply(assign_severity)
-critical_zones = critical_zones.sort_values(by='z_score', ascending=False)
-
-output_file = "Cleaned_Data/statistical_gap_analysis.json"
-critical_zones.to_json(output_file, orient='records', indent=4)
-print(f"\n>>> SUCCESS! Exported {len(critical_zones)} zones to {output_file}")
+print(f"\n>>> COMPLETE. Processed {len(final_ema)} pincodes.")
+print(f">>> Max Transaction Count (Nt) Observed: {merged['Nt'].max()}")
